@@ -1,0 +1,21 @@
+# 환경변수 및 비밀정보
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*secrets*
+
+# Python 임시 파일
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 로그 및 데이터베이스
+*.log
+*.db
+
+# 임시 및 백업 파일
+*.bak
+*.tmp
