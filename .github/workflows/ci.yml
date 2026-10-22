@@ -1,0 +1,33 @@
+name: Management Worker CI
+
+on:
+  push:
+    branches:
+      - main
+      - "setup/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-check:
+    name: Docker build and import check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Build Worker image
+        run: docker build -t schutz-management-worker:ci .
+
+      - name: Check Worker imports
+        run: >
+          docker run --rm --network none
+          schutz-management-worker:ci
+          python -c "import management.worker; print('Worker import OK')"
