@@ -32,6 +32,14 @@ jobs:
           schutz-management-worker:ci
           python -c "import management.worker; print('Worker import OK')"
 
+      - name: AI deadline regression tests
+        run: |
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/tests:/tmp/worker-tests:ro" \
+            schutz-management-worker:ci \
+            python -m unittest discover -s /tmp/worker-tests -p test_ai_deadline.py -v
+
+
   publish-ecr:
     name: Publish image to ECR
     needs: [docker-check]
