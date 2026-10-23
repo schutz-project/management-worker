@@ -74,3 +74,31 @@ jobs:
           docker push "$IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "Published: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-ec2:
+    name: Deploy management-worker to EC2
+    needs: publish-ecr
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: schutz-management-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::527673188566:role/schutz-github-deploy-role
+          aws-region: ap-northeast-2
+      - name: Deploy the image published by this CI run
+        env:
+          PUBLISHED_IMAGE: ${{ needs.publish-ecr.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 deploy/auto-release.py
