@@ -31,3 +31,46 @@ jobs:
           docker run --rm --network none
           schutz-management-worker:ci
           python -c "import management.worker; print('Worker import OK')"
+
+  publish-ecr:
+    name: Publish image to ECR
+    needs: [docker-check]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    env:
+      AWS_REGION: ap-northeast-2
+      REGISTRY: 527673188566.dkr.ecr.ap-northeast-2.amazonaws.com
+      ECR_REPOSITORY: schutz/management-worker
+    steps:
+      - name: Checkout tested source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Authenticate to AWS
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::527673188566:role/schutz-github-deploy-role
+          aws-region: ap-northeast-2
+
+      - name: Log in to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Build and push image
+        id: image
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build --platform linux/amd64 \
+            -f Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Published: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
