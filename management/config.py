@@ -14,3 +14,4 @@ class WorkerSettings(BaseSettings):
     ai_api_key: str=''
     ai_model: str=''
     ai_endpoint: str='https://api.openai.com/v1/chat/completions'
+    ai_timeout_seconds: int=Field(default=60,ge=5,le=120)
