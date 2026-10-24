@@ -23,6 +23,12 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
+      - name: Check HTTP and HTTPS release health
+        run: python3 tests/test_release_health.py
+
+      - name: Validate deployment Compose metadata
+        run: python3 tests/test_release_compose.py
+
       - name: Build Worker image
         run: docker build -t schutz-management-worker:ci .
 

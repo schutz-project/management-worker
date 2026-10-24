@@ -27,19 +27,38 @@ db=schutz-monitoring-management-db-1
 web=schutz-monitoring-management-web-1
 worker=schutz-monitoring-management-worker-1
 
-mapfile -t files < <(
-  docker compose ls --format json | python3 -c '
-import json,sys
-for item in json.load(sys.stdin):
-    if item.get("Name")=="schutz-monitoring":
-        print("\n".join(item["ConfigFiles"].split(",")))
-'
-)
+# The running Web container records the complete ordered deployment stack.
+config_files=$(docker inspect schutz-monitoring-management-web-1 \
+  --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+validated_files=$(python3 - "$config_files" <<'COMPOSE_FILES_PY'
+import sys
+from pathlib import Path
 
-[[ ${#files[@]} -eq 8 ]] || {
-  echo COMPOSE_FILE_COUNT_MISMATCH
-  exit 1
+root = "/opt/schutz-monitoring/"
+required = {
+    root + "compose.management-ec2.yaml",
+    root + "updates/incident-drafts/compose.incident-drafts.yaml",
+    root + "compose.loki-only.yaml",
+    root + "compose.otel-only.yaml",
+    root + "compose.prometheus-only.yaml",
+    root + "compose.blackbox-only.yaml",
+    root + "compose.grafana-only.yaml",
+    root + "compose.ecr.yaml",
 }
+https = root + "compose.management-https.yaml"
+files = sys.argv[1].split(",")
+if len(files) != len(set(files)):
+    raise SystemExit("COMPOSE_FILES_DUPLICATED")
+if not required <= set(files) or set(files) - required - {https}:
+    raise SystemExit("COMPOSE_FILE_SET_MISMATCH")
+if https in files and files[-1] != https:
+    raise SystemExit("HTTPS_OVERRIDE_MUST_BE_LAST")
+if not all(Path(name).is_file() for name in files):
+    raise SystemExit("COMPOSE_FILE_MISSING")
+print("\n".join(files))
+COMPOSE_FILES_PY
+)
+mapfile -t files <<< "$validated_files"
 
 args=()
 has_override=0
@@ -70,6 +89,37 @@ new_image="527673188566.dkr.ecr.ap-northeast-2.amazonaws.com/schutz/${SERVICE}:$
 expected_image="$old_image"
 expected_id="$old_image_id"
 
+web_health() {
+  local target="${1:?container required}" command
+  command=$(docker inspect "$target" --format '{{json .Config.Cmd}}') || return 1
+  docker exec -i "$target" python - "$command" <<'WEB_HEALTH_PY'
+import json, ssl, sys, urllib.request
+
+args = json.loads(sys.argv[1])
+def option(name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+
+port = int(option("--port", "8000"))
+if not 1 <= port <= 65535:
+    raise ValueError("INVALID_HEALTH_PORT")
+cert = option("--ssl-certfile")
+handlers = [urllib.request.ProxyHandler({})]
+scheme = "http"
+if cert:
+    scheme = "https"
+    context = ssl.create_default_context(cafile=cert)
+    # Loopback is the transport address, not the public certificate hostname.
+    # Trust only the configured certificate/chain; never disable TLS verification.
+    context.check_hostname = False
+    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    handlers.append(urllib.request.HTTPSHandler(context=context))
+opener = urllib.request.build_opener(*handlers)
+with opener.open(f"{scheme}://127.0.0.1:{port}/health", timeout=5) as response:
+    if response.status != 200:
+        raise ValueError("WEB_HEALTH_HTTP_FAILED")
+WEB_HEALTH_PY
+}
+
 check_health() {
   [[ $(docker inspect "$container" --format '{{.State.Running}}' 2>/dev/null) == true &&
      $(docker inspect "$container" --format '{{.RestartCount}}' 2>/dev/null) == 0 &&
@@ -81,7 +131,7 @@ check_health() {
      $(docker inspect "$db" --format '{{.Id}}' 2>/dev/null) == "$db_id" &&
      $(docker inspect "$db" --format '{{.State.Health.Status}}' 2>/dev/null) == healthy ]] || return 1
 
-  docker exec "$web" python -c 'import urllib.request; assert urllib.request.urlopen("http://127.0.0.1:8000/health",timeout=5).status==200' >/dev/null 2>&1 || return 1
+  web_health "$web" >/dev/null 2>&1 || return 1
 
   local logs
   logs=$(docker logs --since 180s "$worker" 2>&1) || return 1
