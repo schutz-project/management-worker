@@ -27,19 +27,38 @@ db=schutz-monitoring-management-db-1
 web=schutz-monitoring-management-web-1
 worker=schutz-monitoring-management-worker-1
 
-mapfile -t files < <(
-  docker compose ls --format json | python3 -c '
-import json,sys
-for item in json.load(sys.stdin):
-    if item.get("Name")=="schutz-monitoring":
-        print("\n".join(item["ConfigFiles"].split(",")))
-'
-)
+# The running Web container records the complete ordered deployment stack.
+config_files=$(docker inspect schutz-monitoring-management-web-1 \
+  --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+validated_files=$(python3 - "$config_files" <<'COMPOSE_FILES_PY'
+import sys
+from pathlib import Path
 
-[[ ${#files[@]} -eq 8 ]] || {
-  echo COMPOSE_FILE_COUNT_MISMATCH
-  exit 1
+root = "/opt/schutz-monitoring/"
+required = {
+    root + "compose.management-ec2.yaml",
+    root + "updates/incident-drafts/compose.incident-drafts.yaml",
+    root + "compose.loki-only.yaml",
+    root + "compose.otel-only.yaml",
+    root + "compose.prometheus-only.yaml",
+    root + "compose.blackbox-only.yaml",
+    root + "compose.grafana-only.yaml",
+    root + "compose.ecr.yaml",
 }
+https = root + "compose.management-https.yaml"
+files = sys.argv[1].split(",")
+if len(files) != len(set(files)):
+    raise SystemExit("COMPOSE_FILES_DUPLICATED")
+if not required <= set(files) or set(files) - required - {https}:
+    raise SystemExit("COMPOSE_FILE_SET_MISMATCH")
+if https in files and files[-1] != https:
+    raise SystemExit("HTTPS_OVERRIDE_MUST_BE_LAST")
+if not all(Path(name).is_file() for name in files):
+    raise SystemExit("COMPOSE_FILE_MISSING")
+print("\n".join(files))
+COMPOSE_FILES_PY
+)
+mapfile -t files <<< "$validated_files"
 
 args=()
 has_override=0
