@@ -89,6 +89,37 @@ new_image="527673188566.dkr.ecr.ap-northeast-2.amazonaws.com/schutz/${SERVICE}:$
 expected_image="$old_image"
 expected_id="$old_image_id"
 
+web_health() {
+  local target="${1:?container required}" command
+  command=$(docker inspect "$target" --format '{{json .Config.Cmd}}') || return 1
+  docker exec -i "$target" python - "$command" <<'WEB_HEALTH_PY'
+import json, ssl, sys, urllib.request
+
+args = json.loads(sys.argv[1])
+def option(name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+
+port = int(option("--port", "8000"))
+if not 1 <= port <= 65535:
+    raise ValueError("INVALID_HEALTH_PORT")
+cert = option("--ssl-certfile")
+handlers = [urllib.request.ProxyHandler({})]
+scheme = "http"
+if cert:
+    scheme = "https"
+    context = ssl.create_default_context(cafile=cert)
+    # Loopback is the transport address, not the public certificate hostname.
+    # Trust only the configured certificate/chain; never disable TLS verification.
+    context.check_hostname = False
+    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    handlers.append(urllib.request.HTTPSHandler(context=context))
+opener = urllib.request.build_opener(*handlers)
+with opener.open(f"{scheme}://127.0.0.1:{port}/health", timeout=5) as response:
+    if response.status != 200:
+        raise ValueError("WEB_HEALTH_HTTP_FAILED")
+WEB_HEALTH_PY
+}
+
 check_health() {
   [[ $(docker inspect "$container" --format '{{.State.Running}}' 2>/dev/null) == true &&
      $(docker inspect "$container" --format '{{.RestartCount}}' 2>/dev/null) == 0 &&
@@ -100,7 +131,7 @@ check_health() {
      $(docker inspect "$db" --format '{{.Id}}' 2>/dev/null) == "$db_id" &&
      $(docker inspect "$db" --format '{{.State.Health.Status}}' 2>/dev/null) == healthy ]] || return 1
 
-  docker exec "$web" python -c 'import urllib.request; assert urllib.request.urlopen("http://127.0.0.1:8000/health",timeout=5).status==200' >/dev/null 2>&1 || return 1
+  web_health "$web" >/dev/null 2>&1 || return 1
 
   local logs
   logs=$(docker logs --since 180s "$worker" 2>&1) || return 1
