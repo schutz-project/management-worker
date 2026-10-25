@@ -9,6 +9,8 @@ from management.config import WorkerSettings
 from management.models import Target
 from management.domain import record_probe,record_logs,utc
 from management.jobs import run_one
+from management.alerting import fetch_rules,recovery_snapshot,record_rules,mark_unknown
+from management.models import PrometheusAlertState
 
 def vector(client,url,expr):
     r=client.get(url+'/api/v1/query',params={'query':expr}); r.raise_for_status(); data=r.json()
@@ -32,6 +34,17 @@ def loki_rows(client,url,start,end,depth=0):
 
 def collect(factory,settings,client):
     current=now()
+    if settings.prometheus_alerts_enabled:
+        try:
+            rules=fetch_rules(client,settings.prometheus_url,current)
+            recovery=recovery_snapshot(client,settings.prometheus_url,current)
+            with factory.begin() as db: record_rules(db,rules,recovery,current)
+            logging.info('prometheus alert collection complete')
+        except Exception:
+            logging.warning('prometheus alert collection unavailable (details suppressed)')
+            try:
+                with factory.begin() as db: mark_unknown(db)
+            except Exception: logging.warning('prometheus alert state unavailable (details suppressed)')
     try:
         success=vector(client,settings.prometheus_url,'probe_success{job=~"portal-health|portal-db-health"}')
         timestamps=vector(client,settings.prometheus_url,'timestamp(probe_success{job=~"portal-health|portal-db-health"})')
@@ -58,6 +71,7 @@ def collect(factory,settings,client):
 def main():
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     settings=WorkerSettings(); engine=build_engine(settings.database_url); factory=session_factory(engine)
+    PrometheusAlertState.__table__.create(engine,checkfirst=True)
     stop=Event(); lock=None
     if engine.dialect.name=='postgresql':
         lock=engine.connect()
@@ -67,7 +81,7 @@ def main():
             try: run_one(factory,settings,kind)
             except Exception: logging.warning('%s job storage unavailable',kind)
             stop.wait(1)
-    threads=[Thread(target=job_loop,args=(kind,),daemon=True) for kind in ['slack','ai','slack_ai']]
+    threads=[Thread(target=job_loop,args=(kind,),daemon=True) for kind in ['slack','ai','slack_ai','slack_recovery']]
     for thread in threads: thread.start()
     try:
         with httpx.Client(timeout=5,trust_env=False) as client:

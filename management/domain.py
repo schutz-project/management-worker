@@ -77,6 +77,10 @@ def closure_reasons(db,incident,at=None,test_stopped=False):
     at=at or now(); reasons=[]
     if incident.status!='in_progress': reasons.append('ACTION_REQUIRED')
     if not db.scalar(select(func.count()).select_from(Action).where(Action.incident_id==incident.id,Action.kind=='action')): reasons.append('ACTION_REQUIRED')
+    from management.alert_policy import RULE_IDS,recovery_ready
+    if incident.rule_id in RULE_IDS:
+        if not recovery_ready(db,incident,at): reasons.append('PROMETHEUS_RECOVERY_NOT_CONFIRMED')
+        return sorted(set(reasons))
     state=db.scalar(select(Target).where(Target.id==incident.target_id).with_for_update())
     if incident.rule_id=='login_failures':
         if not test_stopped: reasons.append('TEST_STOP_REQUIRED')
