@@ -87,3 +87,16 @@ class Attempt(Base):
     finished_at: Mapped[datetime | None]=mapped_column(DateTime(timezone=True))
     outcome: Mapped[str]=mapped_column(String(40),default='running')
     error_code: Mapped[str | None]=mapped_column(String(40))
+
+class PrometheusAlertState(Base):
+    """Additive state, separate from HTTP probe targets and business data."""
+    __tablename__='prometheus_alert_states'
+    id: Mapped[str]=mapped_column(String(64),primary_key=True)
+    target_key: Mapped[str]=mapped_column(String(40),unique=True)
+    rule_name: Mapped[str]=mapped_column(String(80),index=True)
+    labels: Mapped[dict]=mapped_column(JSON)
+    last_sample: Mapped[float]=mapped_column(default=0.)
+    evaluated_at: Mapped[datetime | None]=mapped_column(DateTime(timezone=True))
+    state: Mapped[str]=mapped_column(String(20),default='unknown')
+    normal_samples: Mapped[int]=mapped_column(Integer,default=0)
+    incident_id: Mapped[str | None]=mapped_column(String(40))

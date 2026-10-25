@@ -43,8 +43,8 @@ def external(kind,mode,settings,incident,evidence,model):
         except (ValueError,TypeError,KeyError,IndexError): raise JobFailure('AI_FORMAT_INVALID')
         return validate_ai(data,ids)
     label='[모의] ' if incident['synthetic'] else ''
-    suffix='AI 분석이 준비됐습니다.' if kind=='slack_ai' else '새 사건이 생성됐습니다.'
-    text=label+suffix+'\n사건 '+incident['id']+' / 대상 '+incident['target_id']+' / 규칙 '+incident['rule_id']+'\n'+settings.manage_public_url.rstrip('/')+'/incidents/'+incident['id']+'\n로컬 또는 SSM 연결 후 확인하세요.'
+    suffix='복구 신호가 정상 지표로 확인됐습니다. 사건 종료는 관리자 확인 후 진행합니다.' if kind=='slack_recovery' else 'AI 분석이 준비됐습니다.' if kind=='slack_ai' else '새 사건이 생성됐습니다.'
+    text=label+suffix+'\n사건 '+incident['id']+' / 대상 '+incident.get('target_display',incident['target_id'])+' / 규칙 '+incident['rule_id']+'\n'+settings.manage_public_url.rstrip('/')+'/incidents/'+incident['id']+'\n관리자 화면에서 확인하세요.'
     if kind=='slack_ai' and incident.get('ai_summary'):
         summary=incident['ai_summary'].replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
         text+='\nAI 요약(가설): '+summary
@@ -70,6 +70,20 @@ def run_one(factory,settings,kind,at=None,perform=external):
             previous=db.scalar(select(Attempt).where(Attempt.job_id==job.id,Attempt.number==job.attempts))
             if previous and previous.outcome=='running':
                 previous.outcome='unknown'; previous.finished_at=at; previous.error_code='LEASE_EXPIRED'
+                if kind!='ai':
+                    job.status='failed'; job.error_code='DELIVERY_UNKNOWN'; job.lease_until=None; job.lease_token=None
+                    return True
+        if kind=='slack_recovery':
+            from management.alert_policy import recovery_ready
+            incident=db.get(Incident,job.incident_id)
+            from management.models import PrometheusAlertState
+            recovery_state=db.scalar(select(PrometheusAlertState).where(PrometheusAlertState.target_key==incident.target_id))
+            if recovery_state and recovery_state.incident_id!=incident.id:
+                job.status='failed'; job.error_code='RECOVERY_SUPERSEDED'; job.lease_until=None; job.lease_token=None
+                return True
+            if not recovery_ready(db,incident,at):
+                job.status='pending'; job.next_at=at+timedelta(seconds=30); job.lease_until=None; job.lease_token=None
+                return True
         if job.attempts>=max_attempts:
             job.status='failed'; job.error_code='RETRY_EXHAUSTED'; return True
         mode=settings.ai_mode if kind=='ai' else settings.slack_mode
@@ -79,6 +93,10 @@ def run_one(factory,settings,kind,at=None,perform=external):
         db.refresh(job)
         incident=db.get(Incident,job.incident_id)
         info={k:getattr(incident,k) for k in ['id','target_id','rule_id','synthetic','test_run_id']}
+        from management.models import PrometheusAlertState
+        alert_state=db.scalar(select(PrometheusAlertState).where(PrometheusAlertState.target_key==incident.target_id)) if incident.target_id.startswith('pa-') else None
+        if alert_state:
+            info['target_display']=alert_state.rule_name+' / '+alert_state.labels.get('job','portal')+' / '+alert_state.labels.get('instance','전체')
         if kind=='slack_ai':
             ai=db.scalar(select(Job).where(Job.incident_id==incident.id,Job.kind=='ai',Job.status=='succeeded'))
             if ai and ai.result: info['ai_summary']=ai.result.get('summary','')[:500]
@@ -93,6 +111,7 @@ def run_one(factory,settings,kind,at=None,perform=external):
     try: outcome=perform(kind,mode,settings,info,evidence,model)
     except JobFailure as error: failure=error
     except (httpx.TimeoutException,TimeoutError): failure=JobFailure('DELIVERY_UNKNOWN' if kind!='ai' else 'AI_TIMEOUT')
+    except httpx.TransportError: failure=JobFailure('DELIVERY_UNKNOWN' if kind!='ai' else 'AI_TRANSPORT_ERROR')
     except Exception: failure=JobFailure('EXTERNAL_CALL_FAILED')
     finished=at if fixed_clock else now()
     with factory.begin() as db:
@@ -102,7 +121,7 @@ def run_one(factory,settings,kind,at=None,perform=external):
         job.lease_until=None; job.lease_token=None
         if failure:
             attempt.outcome='unknown' if failure.code=='DELIVERY_UNKNOWN' else 'failed'; attempt.error_code=failure.code; job.error_code=failure.code
-            job.status='failed' if job.attempts>=max_attempts else 'pending'
+            job.status='failed' if job.attempts>=max_attempts or failure.code=='DELIVERY_UNKNOWN' else 'pending'
             delay=failure.delay or ([5,15,30][min(job.attempts-1,2)] if kind!='ai' else 5)
             job.next_at=finished+timedelta(seconds=delay)
         else:
