@@ -17,3 +17,5 @@ class WorkerSettings(BaseSettings):
     ai_timeout_seconds: int=Field(default=60,ge=5,le=120)
 
     prometheus_alerts_enabled: bool = True
+    ai_history_enabled: bool = False
+
