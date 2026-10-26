@@ -32,6 +32,7 @@ def historical_context(db, incident):
         Incident.status == 'closed',
         Incident.closed_at >= at - timedelta(days=90),
         Incident.closed_at < at,
+        Incident.detected_at <= Incident.closed_at,
         has_action,
     ).order_by(Incident.closed_at.desc(), Incident.id).limit(3)).all()
     result = []
@@ -61,3 +62,4 @@ def historical_context(db, incident):
             },
         })
     return result
+

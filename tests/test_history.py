@@ -14,7 +14,7 @@ from management.history import historical_context, safe_note
 from management.jobs import run_one, external, JobFailure
 
 
-class HistoryTests(unittest.TestCase):
+class HistoryFixture(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
@@ -55,6 +55,7 @@ class HistoryTests(unittest.TestCase):
         return SimpleNamespace(ai_history_enabled=enabled, ai_mode='demo',
                                ai_model='', ai_timeout_seconds=60, slack_mode='demo')
 
+class HistoryTests(HistoryFixture):
     def test_filters_scope_status_age_and_missing_actions(self):
         wanted = self.prior()
         for kw in [dict(target='database'), dict(rule='response_delay'),
@@ -111,7 +112,7 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(captured[0], captured[1])
         self.assertEqual(captured[0][1]['id'], 'history:'+first)
         with self.factory() as db:
-            self.assertEqual(db.scalar(select(Job)).prompt_version, 'evidence-history-v1')
+            self.assertEqual(db.scalar(select(Job)).prompt_version, 'evidence-history-scrape-v2')
 
     def test_slack_does_not_receive_history(self):
         self.prior()
@@ -149,5 +150,64 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(external('ai','live',settings,{},evidence,'fake'), answer)
 
 
+class CombinedScopeTests(HistoryFixture):
+    def test_scrape_scope_and_history_are_both_sent_without_current_outage_claim(self):
+        with self.factory.begin() as db:
+            db.get(Incident,self.current_id).rule_id='monitoring_target_down'
+        key=self.prior(rule='monitoring_target_down')
+        settings=self.settings()
+        settings.ai_mode='live';settings.ai_api_key='fake'
+        settings.ai_endpoint='https://example.invalid';settings.ai_model='fake'
+        answer=dict(summary='기록 시점의 수집 실패이며 실제 중단은 미확인입니다.',
+                    hypotheses=[], evidence_ids=['current','history:'+key],
+                    next_checks=[], limitations='과거 조치 효과는 미검증입니다.')
+        response=httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(answer)}}]})
+        with patch('management.jobs.post_with_deadline',return_value=response) as send:
+            run_one(self.factory,settings,'ai',at=self.at)
+        messages=send.call_args.kwargs['json']['messages']
+        payload=json.loads(messages[1]['content'])
+        self.assertEqual(payload['incident']['observation_scope']['service_availability'],'unknown')
+        self.assertIn('not a stopped application',messages[0]['content'])
+        self.assertIn('not current evidence',messages[0]['content'])
+        self.assertIn('Korean',messages[0]['content'])
+        self.assertEqual(payload['evidence'][1]['id'],'history:'+key)
+        with self.factory() as db:
+            job=db.scalar(select(Job).where(Job.kind=='ai'))
+            self.assertEqual(job.status,'succeeded')
+            self.assertEqual(job.prompt_version,'evidence-history-scrape-v2')
+
+    def test_disabled_history_still_preserves_pr8_scope(self):
+        self.prior()
+        settings=SimpleNamespace(ai_api_key='fake',ai_endpoint='https://example.invalid',ai_timeout_seconds=60)
+        answer=dict(summary='수집 실패·서비스 상태 미확인',hypotheses=[],evidence_ids=['current'],next_checks=[],limitations='근거 제한')
+        response=httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(answer)}}]})
+        evidence=[{'id':'current','kind':'check','payload':{}}]
+        with patch('management.jobs.post_with_deadline',return_value=response) as send:
+            external('ai','live',settings,{'rule_id':'monitoring_target_down'},evidence,'fake')
+        payload=json.loads(send.call_args.kwargs['json']['messages'][1]['content'])
+        self.assertEqual(payload['evidence'],evidence)
+        self.assertEqual(payload['incident']['observation_scope']['container_running'],'unknown')
+
+    def test_enabling_history_does_not_retrofit_a_saved_input(self):
+        captured=[]
+        def fail(*args):
+            captured.append(args[4]);raise JobFailure('AI_TIMEOUT')
+        run_one(self.factory,self.settings(False),'ai',at=self.at,perform=fail)
+        self.prior()
+        run_one(self.factory,self.settings(True),'ai',at=self.at+timedelta(seconds=6),perform=fail)
+        self.assertEqual(captured[0],captured[1])
+        self.assertEqual([r['id'] for r in captured[1]],['current'])
+        with self.factory() as db:
+            self.assertEqual(db.scalar(select(Job)).prompt_version,'evidence-scrape-scope-v2')
+
+    def test_ninety_day_boundary_and_invalid_case_chronology(self):
+        expected=self.prior(days=90)
+        invalid=self.prior(days=1)
+        with self.factory.begin() as db:
+            db.get(Incident,invalid).detected_at=self.at
+        self.assertEqual([r['id'] for r in self.context()],['history:'+expected])
+
+
 if __name__ == '__main__':
     unittest.main()
+

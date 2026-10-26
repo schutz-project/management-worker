@@ -52,6 +52,13 @@ jobs:
             schutz-management-worker:ci \
             python -m unittest discover -s /tmp/worker-tests -p test_prometheus_alerts.py -v
 
+      - name: AI scrape observation scope tests
+        run: |
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/tests:/tmp/worker-tests:ro" \
+            schutz-management-worker:ci \
+            python -m unittest discover -s /tmp/worker-tests -p test_scrape_scope.py -v
+
       - name: Historical incident context tests
         run: |
           docker run --rm --network none \
@@ -129,4 +136,5 @@ jobs:
           PUBLISHED_IMAGE: ${{ needs.publish-ecr.outputs.image }}
           GH_TOKEN: ${{ github.token }}
         run: python3 deploy/auto-release.py
+
 
