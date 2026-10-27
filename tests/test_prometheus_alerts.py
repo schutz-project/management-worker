@@ -143,11 +143,12 @@ class RecoveryMetricTests(unittest.TestCase):
                 return httpx.Response(200,json={'status':'success','data':{'resultType':'vector','result':[{'metric':{},'value':[at.timestamp(),str(value)]}]}},request=httpx.Request('GET',url))
         self.assertFalse(recovery_snapshot(Metrics(0),'http://unit',at)['PortalHighServerErrorRate'])
         self.assertTrue(recovery_snapshot(Metrics(1),'http://unit',at)['PortalHighServerErrorRate'])
-if __name__=='__main__':unittest.main()    def test_retired_blackbox_job_is_not_valid_alert_target(self):
+    def test_retired_blackbox_job_is_not_valid_alert_target(self):
         from management.alerting import JOBS
         self.assertNotIn('blackbox-exporter', JOBS)
         self.assertTrue({'portal-otel', 'portal-health', 'portal-db-health', 'ec2-node'} <= JOBS)
         with self.assertRaisesRegex(ValueError, 'UNKNOWN_SCRAPE_TARGET'):
             identity('MonitoringTargetDown', {'job': 'blackbox-exporter', 'instance': 'blackbox:9115'})
 
-
+if __name__ == '__main__':
+    unittest.main()
