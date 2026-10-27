@@ -46,6 +46,7 @@ class ReleaseHealthTests(unittest.TestCase):
                             "-nodes", "-days", "1", "-subj", "/CN=Test " + name + " CA",
                             "-addext", "basicConstraints=critical,CA:TRUE",
                             "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+                            "-addext", "subjectKeyIdentifier=hash",
                             "-keyout", str(cls.root / (name + ".key")),
                             "-out", str(cls.root / (name + ".crt"))],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -58,6 +59,7 @@ class ReleaseHealthTests(unittest.TestCase):
         extensions.write_text("basicConstraints=critical,CA:FALSE\n" +
                               "keyUsage=critical,digitalSignature,keyEncipherment\n" +
                               "extendedKeyUsage=serverAuth\n" +
+                              "authorityKeyIdentifier=keyid,issuer\n" +
                               "subjectAltName=DNS:management.example,IP:127.0.0.1\n")
         subprocess.run(["openssl", "x509", "-req", "-in", str(cls.root / "server.csr"),
                         "-CA", str(cls.root / "trusted.crt"),
