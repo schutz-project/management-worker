@@ -55,7 +55,7 @@ class ReleaseHealthTests(unittest.TestCase):
                         "-out", str(cls.root / "server.csr")],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         extensions = cls.root / "server.ext"
-        extensions.write_text("basicConstraints=critical,CA:FALSE\\n".replace("\\n", "\n") +
+        extensions.write_text("basicConstraints=critical,CA:FALSE\n" +
                               "keyUsage=critical,digitalSignature,keyEncipherment\n" +
                               "extendedKeyUsage=serverAuth\n" +
                               "subjectAltName=DNS:management.example,IP:127.0.0.1\n")
