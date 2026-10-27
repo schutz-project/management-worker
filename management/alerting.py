@@ -7,7 +7,7 @@ from management.models import PrometheusAlertState,Incident,Evidence,Job
 from management.domain import detect,utc
 
 from management.alert_policy import RULES,RULE_IDS
-JOBS={'prometheus','portal-otel','blackbox-exporter','portal-health','portal-db-health','ec2-node'}
+JOBS={'prometheus','portal-otel','portal-health','portal-db-health','ec2-node'}
 
 
 def stamp(value):
