@@ -19,7 +19,6 @@ SCHUTZ 프로젝트의 장애 감지 및 사건 처리 백그라운드 프로그
 | `management/domain.py` | 사건 기록 및 처리 로직 |
 | `management/models.py` | 관리 시스템 데이터베이스 모델 |
 | `management/config.py` | 환경변수 기반 설정 |
-| `management/observability.py` | 모니터링 관련 보조 기능 |
 | `portal/db.py` | 공통 데이터베이스 연결 |
 | `portal/models.py` | 공통 데이터베이스 모델 |
 | `requirements.txt` | Python 라이브러리 목록 |
@@ -42,4 +41,4 @@ python -m management.worker
 
 이 저장소는 기존 AWS 환경에서 사용하던 Worker 코드를 분리한 작업본입니다.
 
-단독 실행 및 배포에 필요한 설정은 추후 검증해야 하며, GitHub에 코드를 업로드해도 AWS 서버에 자동 반영되지는 않습니다.
+`main` 브랜치 푸시 시 GitHub Actions에서 Docker 검사 및 회귀 테스트 통과 후 ECR 이미지 게시와 EC2 배포가 실행되도록 설정되어 있습니다. 운영 반영 전에는 Actions 결과와 배포 상태를 확인해야 합니다.
