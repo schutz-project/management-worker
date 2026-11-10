@@ -40,7 +40,7 @@ class ScopeTests(unittest.TestCase):
         self.assertIn('Korean',messages[0]['content'])
 
     def test_other_rules_keep_original_payload_without_scrape_inference(self):
-        incident={'id':'unit','rule_id':'login_failures','target_id':'portal-login'}
+        incident={'id':'unit','rule_id':'response_delay','target_id':'app'}
         with patch('management.jobs.post_with_deadline',return_value=self.response()) as send:
             external('ai','live',self.settings,incident,self.evidence,'fake')
         messages=send.call_args.kwargs['json']['messages']

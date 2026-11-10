@@ -40,9 +40,12 @@ def record_probe(db,id,sample,ok,duration,at=None,status_code=None,synthetic=Fal
             rows=db.scalars(select(Evidence).where(Evidence.target_id==id,Evidence.kind=='check').order_by(Evidence.occurred_at.desc()).limit(3)).all()
             detect(db,state,rule,rows,synthetic,'probe-observation' if synthetic else None)
 
-SAFE_KEYS={'event_id','occurred_at','service','event_type','request_id','trace_id','span_id','route','status_code','duration_ms','db_duration_ms','reason_code','synthetic','test_run_id','source_ref','account_ref','result_count'}
+SAFE_KEYS={'event_id','occurred_at','service','event_type','request_id','trace_id','span_id','route','status_code','duration_ms','db_duration_ms','reason_code','synthetic','test_run_id','source_ref','account_ref','result_count','method'}
 def record_logs(db,logs,end,at=None):
-    at=at or now(); state=target(db,'portal-login')
+    at=at or now()
+    from management.security_events import collect_access_denials
+    collect_access_denials(db, logs, end, at)
+    state=target(db,'portal-login')
     for log in logs:
         if not isinstance(log,dict) or log.get('event_type')!='login_failed': continue
         event_id=log.get('event_id')
@@ -82,7 +85,11 @@ def closure_reasons(db,incident,at=None,test_stopped=False):
         if not recovery_ready(db,incident,at): reasons.append('PROMETHEUS_RECOVERY_NOT_CONFIRMED')
         return sorted(set(reasons))
     state=db.scalar(select(Target).where(Target.id==incident.target_id).with_for_update())
-    if incident.rule_id=='login_failures':
+    from management.security_events import SECURITY_RULES, closure_checks
+    if incident.rule_id in SECURITY_RULES:
+        if not test_stopped: reasons.append('TEST_STOP_REQUIRED')
+        reasons.extend(closure_checks(db, incident, at))
+    elif incident.rule_id=='login_failures':
         if not test_stopped: reasons.append('TEST_STOP_REQUIRED')
         if state is None or not state.log_collection_at or (at-utc(state.log_collection_at)).total_seconds()>60:
             reasons.append('LOG_COLLECTION_STALE')

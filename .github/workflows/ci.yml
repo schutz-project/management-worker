@@ -66,6 +66,13 @@ jobs:
             schutz-management-worker:ci \
             python -m unittest discover -s /tmp/worker-tests -p test_history.py -v
 
+      - name: Trial access-denial and closed notification regression tests
+        run: |
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/tests:/tmp/worker-tests:ro" \
+            schutz-management-worker:ci \
+            python -m unittest discover -s /tmp/worker-tests -p test_security_events.py -v
+
   publish-ecr:
     name: Publish image to ECR
     needs: [docker-check]
