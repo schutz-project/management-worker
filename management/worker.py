@@ -18,7 +18,7 @@ def vector(client,url,expr):
     return {item['metric'].get('check'):float(item['value'][1]) for item in data['data']['result']}
 
 def loki_rows(client,url,start,end,depth=0):
-    r=client.get(url+'/loki/api/v1/query_range',params={'query':'{service="portal-api"} | json | event_type="login_failed"','start':int(start.timestamp()*1e9),'end':int(end.timestamp()*1e9),'direction':'forward','limit':500}); r.raise_for_status()
+    r=client.get(url+'/loki/api/v1/query_range',params={'query':'{service="portal-api"} | json | event_type=~"login_failed|authentication_required|authorization_denied"','start':int(start.timestamp()*1e9),'end':int(end.timestamp()*1e9),'direction':'forward','limit':500}); r.raise_for_status()
     data=r.json()
     if data.get('status')!='success': raise ValueError('QUERY_FAILED')
     values=[v for stream in data['data']['result'] for v in stream['values']]
@@ -81,7 +81,7 @@ def main():
             try: run_one(factory,settings,kind)
             except Exception: logging.warning('%s job storage unavailable',kind)
             stop.wait(1)
-    threads=[Thread(target=job_loop,args=(kind,),daemon=True) for kind in ['slack','ai','slack_ai','slack_recovery']]
+    threads=[Thread(target=job_loop,args=(kind,),daemon=True) for kind in ['slack','ai','slack_ai','slack_recovery','slack_closed']]
     for thread in threads: thread.start()
     try:
         with httpx.Client(timeout=5,trust_env=False) as client:
