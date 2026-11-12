@@ -7,7 +7,22 @@ from management.models import PrometheusAlertState,Incident,Evidence,Job
 from management.domain import detect,utc
 
 from management.alert_policy import RULES,RULE_IDS
-JOBS={'prometheus','portal-otel','portal-health','portal-db-health','ec2-node'}
+PUBLIC_JOB_CHECKS={
+    'homepage-health':'health',
+    'homepage-organization':'organization',
+    'homepage-request-metrics':None,
+    'community-health':'health',
+    'community-questions':'questions',
+    'community-request-metrics':None,
+}
+JOBS={'prometheus','portal-otel','portal-health','portal-db-health','ec2-node'} | PUBLIC_JOB_CHECKS.keys()
+
+
+def valid_check(labels):
+    job=labels.get('job')
+    if job in PUBLIC_JOB_CHECKS:
+        return labels.get('check')==PUBLIC_JOB_CHECKS[job]
+    return 'check' not in labels or labels['check'] in {'proxy','app','database'}
 
 
 def stamp(value):
@@ -31,7 +46,7 @@ def identity(name,labels):
         raise ValueError('INVALID_ALERT_LABELS')
     if name=='MonitoringTargetDown' and (safe.get('job') not in JOBS or not safe.get('instance')):
         raise ValueError('UNKNOWN_SCRAPE_TARGET')
-    if 'check' in safe and safe['check'] not in {'proxy','app','database'}:
+    if not valid_check(safe):
         raise ValueError('UNKNOWN_CHECK')
     digest=hashlib.sha256((name+'\n'+json.dumps(safe,sort_keys=True)).encode()).hexdigest()
     return digest,'pa-'+digest[:32],safe
@@ -94,7 +109,7 @@ def recovery_snapshot(client,url,at):
             result={}
             for row in rows:
                 labels=row['metric']
-                if labels.get('job') not in JOBS: continue
+                if labels.get('job') not in JOBS or not valid_check(labels): continue
                 key=tuple(labels.get(k,'') for k in ('job','instance','check'))
                 if key in result: raise ValueError('AMBIGUOUS_UP')
                 result[key]=float(row['value'][1])
