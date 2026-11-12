@@ -39,6 +39,40 @@ class Fixture(unittest.TestCase):
     def settings(self): return SimpleNamespace(ai_mode='demo',slack_mode='demo',ai_timeout_seconds=60,ai_model='',manage_public_url='https://manage.invalid')
 
 class AlertTests(Fixture):
+    def test_public_targets_create_distinct_incidents_and_recover(self):
+        targets=(
+            ('homepage-health','health'),('homepage-organization','organization'),
+            ('homepage-request-metrics',None),('community-health','health'),
+            ('community-questions','questions'),('community-request-metrics',None),
+        )
+        metrics=[]
+        for job,check in targets:
+            self.labels={'job':job,'instance':'service:8081'}
+            if check is not None:
+                self.labels['check']=check
+            metrics.append(self.labels)
+            self.apply(self.rules())
+            with self.assertRaisesRegex(ValueError,'UNKNOWN_CHECK'):
+                identity(self.name,{**self.labels,'check':'proxy'})
+        self.assertEqual(self.count(Incident),6)
+
+        class HealthyMetrics:
+            def get(self,url,params):
+                values={'up':1,'timestamp(up)':at.timestamp()}
+                value=values[params['query']]
+                rows=[{'metric':labels,'value':[at.timestamp(),str(value)]} for labels in metrics]
+                return Client({'status':'success','data':{'resultType':'vector','result':rows}}).get(url,params)
+
+        for seconds in (30,60):
+            at=self.at+timedelta(seconds=seconds)
+            recovery=recovery_snapshot(HealthyMetrics(),'http://unit',at)
+            self.assertEqual(len(recovery[self.name]),6)
+            self.apply(self.rules(at,state='inactive'),recovery,at)
+        with self.factory() as db:
+            incidents=db.scalars(select(Incident)).all()
+            self.assertTrue(all(row.status=='new' and recovery_ready(db,row,at) for row in incidents))
+        self.assertEqual(self.count(Job),18)
+
     def test_repeat_and_restart_deduplicate_incident_and_initial_jobs(self):
         self.apply(self.rules());self.apply(self.rules());self.apply(self.rules(self.at+timedelta(seconds=30)))
         self.assertEqual(self.count(Incident),1);self.assertEqual(self.count(Job),2);self.assertEqual(self.count(Evidence),2)
